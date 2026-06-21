@@ -127,13 +127,29 @@ func (b *Bot) OnPollVote(ctx context.Context, ev waha.PollVoteEvent) error {
 }
 
 // reply sends a text message back to the same chat the trigger came from.
-// Replies don't include @mentions back at the user — too noisy.
+// Any "@<bot-phone>" tokens in text are automatically promoted to true
+// WhatsApp mentions so they render as the bot's contact/push name rather
+// than as raw digits.
 func (b *Bot) reply(ctx context.Context, ev waha.MessageEvent, text string) error {
-	_, err := b.WAHA.SendText(ctx, ev.From, text, nil)
+	mentions := b.selfMentionIfPresent(text, nil)
+	_, err := b.WAHA.SendText(ctx, ev.From, text, mentions)
 	if err != nil {
 		b.Log.Error("reply failed", "err", err, "chat", ev.From)
 	}
 	return err
+}
+
+// selfMentionIfPresent returns `extra` plus the bot's own jid if text
+// contains the bot's mention token. WhatsApp needs the jid in mentions[]
+// for the "@<phone>" substring to render as @<name>.
+func (b *Bot) selfMentionIfPresent(text string, extra []string) []string {
+	if !strings.Contains(text, b.Cfg.MentionToken()) {
+		return extra
+	}
+	out := make([]string, 0, len(extra)+1)
+	out = append(out, extra...)
+	out = append(out, waha.FormatJID(b.Cfg.WAHABotPhone))
+	return out
 }
 
 // truncate clips long titles/queries in WhatsApp replies.

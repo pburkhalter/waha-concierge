@@ -34,6 +34,9 @@ func (b *Bot) sendWelcome(ctx context.Context, chatID, userJID string) error {
 	if phone != "" {
 		mentions = []string{userJID}
 	}
+	// Promote the bot's own "@<phone>" reference in the body so it renders
+	// as the bot's name on the recipients' clients.
+	mentions = b.selfMentionIfPresent(body, mentions)
 	_, err := b.WAHA.SendText(ctx, chatID, body, mentions)
 	return err
 }
