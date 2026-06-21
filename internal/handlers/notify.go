@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pburkhalter/waha-concierge/internal/jellyfin"
 	"github.com/pburkhalter/waha-concierge/internal/seerr"
 	"github.com/pburkhalter/waha-concierge/internal/store"
 	"github.com/pburkhalter/waha-concierge/internal/waha"
@@ -150,19 +151,41 @@ func (b *Bot) formatMovieNotice(ctx context.Context, ev radarrWebhook) (string, 
 	if ev.Movie.Year > 0 {
 		year = fmt.Sprintf(" (%d)", ev.Movie.Year)
 	}
-	header := fmt.Sprintf("🎬 *%s%s* ist verfügbar.", ev.Movie.Title, year)
 	mention, requester := b.requesterMention(ctx, ev.Movie.TmdbID)
+	link := b.jellyfinLink(ctx, ev.Movie.TmdbID, "movie")
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf("🎬 *Film:* %s%s", ev.Movie.Title, year))
 	if mention != "" {
-		return header + "\n🎉 " + mention + " — viel Spass!", []string{requester}
+		lines = append(lines, "🎉 "+mention+" — viel Spass!")
 	}
-	return header + "\n🍿 " + b.Cfg.JellyfinExternalURL, nil
+	lines = append(lines, "🍿 "+link)
+
+	var mentions []string
+	if requester != "" {
+		mentions = []string{requester}
+	}
+	return strings.Join(lines, "\n"), mentions
+}
+
+// jellyfinLink resolves the TMDB id to a Jellyfin item and builds the
+// web-client deep link. Falls back to the bare library URL when the item
+// hasn't been scanned yet.
+func (b *Bot) jellyfinLink(ctx context.Context, tmdbID int, mediaType string) string {
+	if it, err := b.Jellyfin.FindByTMDB(ctx, tmdbID, mediaType); err == nil {
+		if u := jellyfin.ItemWebURL(b.Cfg.JellyfinExternalURL, it.ID, it.ServerID); u != "" {
+			return u
+		}
+	}
+	return b.Cfg.JellyfinExternalURL
 }
 
 // ─── grouping flush ───────────────────────────────────────────────────────
 
 // FlushPending posts buffered Sonarr notifications. Call from a periodic
 // ticker (e.g. every 60s) with a `wait` like 10*time.Minute — anything
-// older than wait gets grouped and sent.
+// older than wait gets grouped and sent. When the buffered payload has
+// a poster URL, the bot uses SendImage so the show poster renders inline.
 func (b *Bot) FlushPending(ctx context.Context, wait time.Duration) error {
 	groups, err := b.Store.DueImports(ctx, wait)
 	if err != nil {
@@ -172,9 +195,15 @@ func (b *Bot) FlushPending(ctx context.Context, wait time.Duration) error {
 		if len(items) == 0 {
 			continue
 		}
-		body, mentions, ids := b.formatEpisodeGroup(ctx, showKey, items)
-		if _, err := b.WAHA.SendText(ctx, b.Cfg.WAHAChatID, body, mentions); err != nil {
-			b.Log.Warn("flush send failed", "err", err, "show", showKey)
+		body, mentions, ids, poster := b.formatEpisodeGroup(ctx, showKey, items)
+		var sendErr error
+		if poster != "" {
+			_, sendErr = b.WAHA.SendImage(ctx, b.Cfg.WAHAChatID, poster, body, mentions)
+		} else {
+			_, sendErr = b.WAHA.SendText(ctx, b.Cfg.WAHAChatID, body, mentions)
+		}
+		if sendErr != nil {
+			b.Log.Warn("flush send failed", "err", sendErr, "show", showKey)
 			continue
 		}
 		if err := b.Store.MarkFlushed(ctx, ids); err != nil {
@@ -197,15 +226,17 @@ type pendingPayload struct {
 
 // formatEpisodeGroup turns N buffered single-episode rows into one tidy
 // WhatsApp message. Mentions the requester of the series (if any) once
-// per group, not per episode.
-func (b *Bot) formatEpisodeGroup(ctx context.Context, _ string, items []store.PendingImport) (string, []string, []int64) {
+// per group, not per episode. Returns the poster URL alongside so the
+// caller can pick SendImage vs SendText.
+func (b *Bot) formatEpisodeGroup(ctx context.Context, _ string, items []store.PendingImport) (body string, mentions []string, ids []int64, poster string) {
 	if len(items) == 0 {
-		return "", nil, nil
+		return "", nil, nil, ""
 	}
-	ids := make([]int64, 0, len(items))
-	displayName := items[0].DisplayName
+	ids = make([]int64, 0, len(items))
 	tmdbID := 0
 	episodes := make([]string, 0, len(items))
+	seriesTitle := ""
+	season := 0
 	for _, it := range items {
 		ids = append(ids, it.ID)
 		var p pendingPayload
@@ -213,24 +244,45 @@ func (b *Bot) formatEpisodeGroup(ctx context.Context, _ string, items []store.Pe
 		if tmdbID == 0 {
 			tmdbID = p.TmdbID
 		}
+		if seriesTitle == "" {
+			seriesTitle = p.SeriesTitle
+		}
+		if season == 0 {
+			season = p.Season
+		}
+		if poster == "" {
+			poster = p.PosterURL
+		}
 		episodes = append(episodes,
-			fmt.Sprintf("  📺 S%02dE%02d — %s", p.Season, p.Episode, truncate(p.EpisodeName, 50)))
+			fmt.Sprintf("  • S%02dE%02d — %s", p.Season, p.Episode, truncate(p.EpisodeName, 50)))
+	}
+	if seriesTitle == "" {
+		seriesTitle = items[0].DisplayName
 	}
 
-	header := fmt.Sprintf("✨ *%s* — %d Episoden hinzugefügt:", displayName, len(items))
 	mention, requester := b.requesterMention(ctx, tmdbID)
-	var mentions []string
+	link := b.jellyfinLink(ctx, tmdbID, "tv")
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf("📺 *Serie:* %s — Staffel %d (%d %s)",
+		seriesTitle, season, len(items), pluralEp(len(items))))
 	if mention != "" {
-		header += "\n🎉 " + mention
+		lines = append(lines, "🎉 "+mention+" — viel Spass!")
 		mentions = []string{requester}
 	}
-	body := header + "\n\n" + strings.Join(episodes, "\n")
-	if len(items) >= 8 {
-		// Long lists become noisy in WhatsApp — drop the per-episode rows
-		// and link to Jellyfin instead.
-		body = header + fmt.Sprintf("\n\n🍿 %s", b.Cfg.JellyfinExternalURL)
+	if len(items) < 6 {
+		lines = append(lines, "", strings.Join(episodes, "\n"))
 	}
-	return body, mentions, ids
+	lines = append(lines, "", "🍿 "+link)
+	body = strings.Join(lines, "\n")
+	return body, mentions, ids, poster
+}
+
+func pluralEp(n int) string {
+	if n == 1 {
+		return "Episode"
+	}
+	return "Episoden"
 }
 
 // ─── requester @mention ───────────────────────────────────────────────────

@@ -6,6 +6,7 @@ package jellyfin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -106,6 +107,71 @@ func (c *Client) PosterURL(itemID string) string {
 		q.Set("api_key", c.APIKey)
 	}
 	return fmt.Sprintf("%s/Items/%s/Images/Primary?%s", c.BaseURL, url.PathEscape(itemID), q.Encode())
+}
+
+// Lookup is the slim result of a TMDB→Jellyfin id resolution.
+type Lookup struct {
+	ID       string
+	Name     string
+	Type     string // "Movie" | "Series"
+	ServerID string
+}
+
+// FindByTMDB resolves a TMDB id to the matching Jellyfin item. Returns
+// ErrNotFound when Jellyfin hasn't scanned the title yet (notification
+// fired before the library scan finished).
+func (c *Client) FindByTMDB(ctx context.Context, tmdbID int, mediaType string) (*Lookup, error) {
+	if tmdbID <= 0 {
+		return nil, ErrNotFound
+	}
+	jfType := "Movie"
+	if mediaType == "tv" || mediaType == "series" {
+		jfType = "Series"
+	}
+	q := url.Values{}
+	q.Set("Recursive", "true")
+	q.Set("IncludeItemTypes", jfType)
+	q.Set("AnyProviderIdEquals", fmt.Sprintf("Tmdb.%d", tmdbID))
+	q.Set("Fields", "ProviderIds")
+	q.Set("Limit", "1")
+	path := fmt.Sprintf("/Users/%s/Items?%s", c.UserID, q.Encode())
+
+	var env struct {
+		Items []struct {
+			ID       string `json:"Id"`
+			Name     string `json:"Name"`
+			Type     string `json:"Type"`
+			ServerID string `json:"ServerId"`
+		} `json:"Items"`
+	}
+	if err := c.get(ctx, path, &env); err != nil {
+		return nil, err
+	}
+	if len(env.Items) == 0 {
+		return nil, ErrNotFound
+	}
+	it := env.Items[0]
+	return &Lookup{ID: it.ID, Name: it.Name, Type: it.Type, ServerID: it.ServerID}, nil
+}
+
+// ErrNotFound signals "nothing matched". Callers fall back to a library
+// landing link rather than a per-item deep link.
+var ErrNotFound = errors.New("jellyfin: not found")
+
+// ItemWebURL builds the Jellyfin web client URL for a given item id. The
+// `externalURL` is the user-facing host (e.g. https://jellyfin.home....).
+// Returns "" when no externalURL is set so callers can decide what to
+// emit instead.
+func ItemWebURL(externalURL, itemID, serverID string) string {
+	if externalURL == "" || itemID == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("id", itemID)
+	if serverID != "" {
+		q.Set("serverId", serverID)
+	}
+	return fmt.Sprintf("%s/web/#/details?%s", externalURL, q.Encode())
 }
 
 func (c *Client) auth(req *http.Request) {
