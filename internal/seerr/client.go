@@ -173,6 +173,32 @@ func (c *Client) ListRequests(ctx context.Context, take int) ([]Request, error) 
 	return env.Results, nil
 }
 
+// MediaTitle resolves a tmdbId to its display title via Seerr's TMDB-proxy
+// endpoint (/movie/{id} or /tv/{id}). Seerr's /request response only carries
+// the tmdbId, so callers that want a human-readable title need this extra
+// hop. Returns ("", nil) when the response has no title/name field rather
+// than erroring, so callers can fall back to "TMDB#<id>".
+func (c *Client) MediaTitle(ctx context.Context, mediaType string, tmdbID int) (string, error) {
+	if tmdbID <= 0 {
+		return "", nil
+	}
+	path := fmt.Sprintf("/movie/%d", tmdbID)
+	if mediaType == "tv" {
+		path = fmt.Sprintf("/tv/%d", tmdbID)
+	}
+	var env struct {
+		Title string `json:"title"` // movies
+		Name  string `json:"name"`  // tv
+	}
+	if err := c.get(ctx, path, &env); err != nil {
+		return "", err
+	}
+	if env.Title != "" {
+		return env.Title, nil
+	}
+	return env.Name, nil
+}
+
 // FindRequestByTMDB scans the most recent requests for a match on tmdbId.
 // Seerr lacks a per-tmdbId index, so the bot keeps `take` modest (notifications
 // only need to identify the requester of a *just-fulfilled* item).

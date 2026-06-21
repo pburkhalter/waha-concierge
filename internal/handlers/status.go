@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pburkhalter/waha-concierge/internal/seerr"
 	"github.com/pburkhalter/waha-concierge/internal/waha"
 )
 
@@ -34,27 +35,70 @@ func (b *Bot) status(ctx context.Context, ev waha.MessageEvent) error {
 	return b.reply(ctx, ev, body)
 }
 
-// wartet returns just the items that are queued/waiting (not actively
-// downloading). Helps the group see "what's stuck".
+// wartet lists every Seerr request whose media isn't fully Available yet
+// (status < 5). The Sonarr/Radarr download queues used to be shown here too
+// but rip through items in seconds — the group never sees them. Seerr's
+// pending list is the more useful "what's unterwegs" view.
 func (b *Bot) wartet(ctx context.Context, ev waha.MessageEvent) error {
-	sq, _ := b.Sonarr.Queue(ctx)
-	rq, _ := b.Radarr.Queue(ctx)
+	reqs, err := b.Seerr.ListRequests(ctx, 50)
+	if err != nil {
+		return b.reply(ctx, ev, "⚠️ Seerr nicht erreichbar.")
+	}
 
-	var lines []string
-	for _, it := range sq {
-		if it.Status == "queued" || it.TrackedDownloadState == "importBlocked" || it.Status == "warning" {
-			lines = append(lines, "  📺 "+formatQueueRow(it.Title, it.Status, it.TrackedDownloadState, it.Timeleft, ""))
+	var pending []seerr.Request
+	for _, r := range reqs {
+		if r.Media.Status < 5 {
+			pending = append(pending, r)
 		}
 	}
-	for _, it := range rq {
-		if it.Status == "queued" || it.TrackedDownloadState == "importBlocked" || it.Status == "warning" {
-			lines = append(lines, "  🎬 "+formatQueueRow(it.Title, it.Status, it.TrackedDownloadState, it.Timeleft, ""))
+	if len(pending) == 0 {
+		return b.reply(ctx, ev, "✅ Keine offenen Requests.")
+	}
+
+	lines := make([]string, 0, len(pending))
+	for _, r := range pending {
+		title, _ := b.Seerr.MediaTitle(ctx, r.Type, r.Media.TmdbID)
+		if title == "" {
+			title = fmt.Sprintf("TMDB#%d", r.Media.TmdbID)
 		}
+		emoji := "🎬"
+		if r.Type == "tv" {
+			emoji = "📺"
+		}
+		bits := []string{truncate(title, 40), mediaStatusLabel(r.Media.Status)}
+		if who := requesterName(r); who != "" {
+			bits = append(bits, who)
+		}
+		lines = append(lines, "  "+emoji+" "+strings.Join(bits, " · "))
 	}
-	if len(lines) == 0 {
-		return b.reply(ctx, ev, "✅ Kein Item wartet aktuell.")
+
+	body := fmt.Sprintf("🕗 *Offene Requests (%d):*\n%s", len(lines), strings.Join(lines, "\n"))
+	return b.reply(ctx, ev, body)
+}
+
+// mediaStatusLabel maps Seerr's media status enum (1=UNKNOWN, 2=PENDING,
+// 3=PROCESSING, 4=PARTIALLY_AVAILABLE, 5=AVAILABLE) to user-facing German.
+// 5 is filtered out before this is called.
+func mediaStatusLabel(s int) string {
+	switch s {
+	case 2:
+		return "ausstehend"
+	case 3:
+		return "in Bearbeitung"
+	case 4:
+		return "teilweise verfügbar"
 	}
-	return b.reply(ctx, ev, "🕗 *Wartet:*\n"+strings.Join(lines, "\n"))
+	return "unbekannt"
+}
+
+func requesterName(r seerr.Request) string {
+	if r.RequestedBy.DisplayName != "" {
+		return r.RequestedBy.DisplayName
+	}
+	if r.RequestedBy.JellyfinUserName != "" {
+		return r.RequestedBy.JellyfinUserName
+	}
+	return r.RequestedBy.Username
 }
 
 // formatQueueRow shapes one line. The state markers and the time-left are

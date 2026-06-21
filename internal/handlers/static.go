@@ -18,7 +18,7 @@ func (b *Bot) help(ctx context.Context, ev waha.MessageEvent) error {
 		mention + " *request* `<titel>` — direkt anfragen",
 		mention + " *status* — was gerade läuft",
 		mention + " *neu* — letzte 10 hinzugefügt",
-		mention + " *wartet* — Sonarr/Radarr-Queue",
+		mention + " *wartet* — offene Seerr-Requests",
 		mention + " *stats* — Library-Zahlen",
 		mention + " *library* — Jellyfin-Link",
 		"",
