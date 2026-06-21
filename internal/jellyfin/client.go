@@ -117,6 +117,36 @@ type Lookup struct {
 	ServerID string
 }
 
+// LibraryCounts returns the number of items in each VirtualFolder
+// (Filme / Serien / ...). Strictly per-library — orphan rows that live
+// in the global Items table but no longer belong to any active library
+// are excluded, so the numbers match what users see in the app.
+type LibraryCounts struct {
+	Movies   int
+	Series   int
+	Episodes int
+}
+
+// CountLibrary returns the number of items of `itemType` ("Movie",
+// "Series", "Episode") that resolve under the given parent library id.
+// Used by the stats command to avoid the misleading global /Items/Counts
+// total (which includes orphans from old/destroyed libraries).
+func (c *Client) CountLibrary(ctx context.Context, parentID, itemType string) (int, error) {
+	q := url.Values{}
+	q.Set("ParentId", parentID)
+	q.Set("Recursive", "true")
+	q.Set("IncludeItemTypes", itemType)
+	q.Set("Limit", "0") // we only want the count, not the rows
+	path := fmt.Sprintf("/Users/%s/Items?%s", c.UserID, q.Encode())
+	var env struct {
+		TotalRecordCount int `json:"TotalRecordCount"`
+	}
+	if err := c.get(ctx, path, &env); err != nil {
+		return 0, err
+	}
+	return env.TotalRecordCount, nil
+}
+
 // FindByTMDB resolves a TMDB id to the matching Jellyfin item. Returns
 // ErrNotFound when Jellyfin hasn't scanned the title yet (notification
 // fired before the library scan finished).

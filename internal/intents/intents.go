@@ -31,10 +31,8 @@ const (
 	KindStatus
 	KindNeu
 	KindLibrary
-	KindWerHat
 	KindStats
 	KindWartet
-	KindIch
 	KindNumericReply
 )
 
@@ -53,14 +51,10 @@ func (k Kind) String() string {
 		return "neu"
 	case KindLibrary:
 		return "library"
-	case KindWerHat:
-		return "wer_hat"
 	case KindStats:
 		return "stats"
 	case KindWartet:
 		return "wartet"
-	case KindIch:
-		return "ich"
 	case KindNumericReply:
 		return "numeric_reply"
 	}
@@ -155,16 +149,10 @@ func Parse(body string, mentionTokens []string, mentionedSelf bool) Command {
 		cmd.Kind = KindNeu
 	case "library", "lib", "jellyfin":
 		cmd.Kind = KindLibrary
-	case "wer", "who":
-		// "wer hat <q>?" — drop the "hat" if present.
-		cmd.Kind = KindWerHat
-		cmd.Arg = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(arg, "hat"), "Hat"))
 	case "stats", "statistik":
 		cmd.Kind = KindStats
 	case "wartet", "pending", "waiting", "queue-pending":
 		cmd.Kind = KindWartet
-	case "ich", "me", "mich":
-		cmd.Kind = KindIch
 	default:
 		// Unknown verb — treat the whole thing as a search.
 		cmd.Kind = KindSuche

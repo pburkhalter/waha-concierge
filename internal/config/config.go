@@ -40,6 +40,14 @@ type Config struct {
 	JellyfinAPIKey string
 	JellyfinUserID string // admin user used for /Users/{id}/Items queries
 
+	// Library VirtualFolder ids — looked up once at deploy time via
+	// /Library/VirtualFolders. Used by the stats command to count only
+	// the visible items rather than the global Items table (which leaks
+	// orphans from destroyed libraries). Empty disables per-library
+	// counting and falls back to global counts.
+	JellyfinMovieLibraryID  string
+	JellyfinSeriesLibraryID string
+
 	// External, user-facing URLs included in reply text + welcome message.
 	JellyfinExternalURL string
 	SeerrExternalURL    string
@@ -96,6 +104,8 @@ func Load(environ []string) (*Config, error) {
 		JellyfinURL:         strings.TrimRight(get("JELLYFIN_URL"), "/"),
 		JellyfinAPIKey:      get("JELLYFIN_API_KEY"),
 		JellyfinUserID:      get("JELLYFIN_USER_ID"),
+		JellyfinMovieLibraryID:  get("JELLYFIN_MOVIE_LIBRARY_ID"),
+		JellyfinSeriesLibraryID: get("JELLYFIN_SERIES_LIBRARY_ID"),
 		JellyfinExternalURL: strings.TrimRight(get("JELLYFIN_EXTERNAL_URL"), "/"),
 		SeerrExternalURL:    strings.TrimRight(get("SEERR_EXTERNAL_URL"), "/"),
 		CronWeeklyDigest:    defaulted(get, "CRON_WEEKLY_DIGEST", "0 9 * * 0"),

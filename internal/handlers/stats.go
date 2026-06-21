@@ -2,110 +2,48 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/pburkhalter/waha-concierge/internal/seerr"
 	"github.com/pburkhalter/waha-concierge/internal/waha"
 )
 
-// stats summarises the library + recent request activity. Three lines so
-// the message stays scannable.
+// stats summarises the library state. Per-library counts are pulled from
+// the Filme + Serien VirtualFolders so orphan rows from destroyed
+// libraries don't inflate the numbers. Falls back to global /Items/Counts
+// when the operator hasn't supplied JELLYFIN_*_LIBRARY_ID values.
 func (b *Bot) stats(ctx context.Context, ev waha.MessageEvent) error {
-	counts, err := b.Jellyfin.Counts(ctx)
-	if err != nil {
-		return b.reply(ctx, ev, "⚠️ Jellyfin counts fehlgeschlagen.")
-	}
-	reqs, err := b.Seerr.ListRequests(ctx, 100)
-	if err != nil {
-		reqs = nil
-	}
-	// Tally the top requester this week (by request count).
-	byUser := map[string]int{}
-	for _, r := range reqs {
-		byUser[r.RequestedBy.DisplayName]++
-	}
-	top := ""
-	topN := 0
-	for u, n := range byUser {
-		if n > topN {
-			top = u
-			topN = n
+	movies, series, episodes, ok := b.libraryCounts(ctx)
+	if !ok {
+		// Last-resort fallback. The numbers may be off (orphan items) but
+		// it's better than no answer.
+		counts, err := b.Jellyfin.Counts(ctx)
+		if err != nil {
+			return b.reply(ctx, ev, "⚠️ Jellyfin counts fehlgeschlagen.")
 		}
+		movies, series, episodes = counts.Movie, counts.Series, counts.Episode
 	}
-
 	body := fmt.Sprintf(`📊 *Library:*
   🎬 %d Filme
-  📺 %d Serien (%d Episoden)
-
-🎯 *Letzte 100 Requests:* %d (Top: %s)`,
-		counts.Movie, counts.Series, counts.Episode, len(reqs), top)
+  📺 %d Serien (%d Episoden)`, movies, series, episodes)
 	return b.reply(ctx, ev, body)
 }
 
-// ich shows the calling user's account snapshot. Pulled by matching their
-// WhatsApp phone against the PhoneMap — empty mapping means we don't know
-// who they are.
-func (b *Bot) ich(ctx context.Context, ev waha.MessageEvent) error {
-	phone := waha.ParsePhoneFromJID(ev.Participant)
-	username := lookupUsernameByPhone(b.Cfg.PhoneMap, phone)
-	if username == "" {
-		return b.reply(ctx, ev,
-			"🤔 Ich kenne deine WhatsApp-Nummer noch nicht. Frag den Admin nach `PHONE_MAP_*`-Mapping.")
+// libraryCounts queries each configured library individually. Returns
+// false when no library ids are configured so the caller can fall back.
+func (b *Bot) libraryCounts(ctx context.Context) (movies, series, episodes int, ok bool) {
+	movID := b.Cfg.JellyfinMovieLibraryID
+	serID := b.Cfg.JellyfinSeriesLibraryID
+	if movID == "" || serID == "" {
+		return 0, 0, 0, false
 	}
-	reqs, err := b.Seerr.ListRequests(ctx, 200)
-	if err != nil {
-		return b.reply(ctx, ev, "⚠️ Seerr-Abfrage fehlgeschlagen.")
+	if n, err := b.Jellyfin.CountLibrary(ctx, movID, "Movie"); err == nil {
+		movies = n
 	}
-	mine := []seerr.Request{}
-	for _, r := range reqs {
-		if strings.EqualFold(r.RequestedBy.JellyfinUserName, username) ||
-			strings.EqualFold(r.RequestedBy.Username, username) {
-			mine = append(mine, r)
-		}
+	if n, err := b.Jellyfin.CountLibrary(ctx, serID, "Series"); err == nil {
+		series = n
 	}
-	body := fmt.Sprintf(`👤 *Du:* %s
-  🎯 %d Requests in der jüngsten Historie`, username, len(mine))
-	return b.reply(ctx, ev, body)
-}
-
-// werHat answers "wer hat <titel>?" by searching Seerr for the title and
-// then finding the matching request. Falls back to "unbekannt" when the
-// item isn't in any tracked request.
-func (b *Bot) werHat(ctx context.Context, ev waha.MessageEvent, query string) error {
-	q := trimQuery(query)
-	if q == "" {
-		return b.reply(ctx, ev, "Beispiel: "+b.Cfg.MentionToken()+" wer hat Dune")
+	if n, err := b.Jellyfin.CountLibrary(ctx, serID, "Episode"); err == nil {
+		episodes = n
 	}
-	results, err := b.Seerr.Search(ctx, q)
-	if err != nil {
-		return b.reply(ctx, ev, "⚠️ Suche fehlgeschlagen.")
-	}
-	top := pickTopMedia(results, 1)
-	if len(top) == 0 {
-		return b.reply(ctx, ev, "🤷 Keine Treffer für *"+q+"*.")
-	}
-	r, err := b.Seerr.FindRequestByTMDB(ctx, top[0].ID)
-	if errors.Is(err, seerr.ErrNotFound) {
-		return b.reply(ctx, ev, fmt.Sprintf("🤷 *%s* wurde von niemandem in der jüngsten Historie angefragt.", top[0].DisplayTitle()))
-	}
-	if err != nil {
-		return b.reply(ctx, ev, "⚠️ Seerr-Abfrage fehlgeschlagen.")
-	}
-	who := r.RequestedBy.DisplayName
-	if who == "" {
-		who = r.RequestedBy.JellyfinUserName
-	}
-	return b.reply(ctx, ev, fmt.Sprintf("👤 *%s* wurde von *%s* angefragt.", top[0].DisplayTitle(), who))
-}
-
-// lookupUsernameByPhone returns the username whose mapped phone matches.
-func lookupUsernameByPhone(phoneMap map[string]string, phone string) string {
-	for u, p := range phoneMap {
-		if p == phone {
-			return u
-		}
-	}
-	return ""
+	return movies, series, episodes, true
 }

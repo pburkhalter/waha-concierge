@@ -90,16 +90,12 @@ func (b *Bot) OnMessage(ctx context.Context, ev waha.MessageEvent) error {
 		return b.status(ctx, ev)
 	case intents.KindNeu:
 		return b.neu(ctx, ev)
-	case intents.KindIch:
-		return b.ich(ctx, ev)
 	case intents.KindSuche:
 		return b.suche(ctx, ev, cmd.Arg)
 	case intents.KindRequest:
 		return b.request(ctx, ev, cmd.Arg)
 	case intents.KindNumericReply:
 		return b.numericReply(ctx, ev, cmd.Arg)
-	case intents.KindWerHat:
-		return b.werHat(ctx, ev, cmd.Arg)
 	case intents.KindStats:
 		return b.stats(ctx, ev)
 	case intents.KindWartet:
