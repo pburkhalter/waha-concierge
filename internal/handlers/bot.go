@@ -56,8 +56,23 @@ func New(cfg *config.Config, log *slog.Logger, w *waha.Client, sr *seerr.Client,
 
 // OnMessage routes inbound messages through the intents parser.
 func (b *Bot) OnMessage(ctx context.Context, ev waha.MessageEvent) error {
-	cmd := intents.Parse(ev.Body, b.Cfg.MentionToken())
+	selfJID := waha.FormatJID(b.Cfg.WAHABotPhone)
+	mentionedSelf := false
+	for _, m := range ev.MentionedIDs {
+		if m == selfJID {
+			mentionedSelf = true
+			break
+		}
+	}
+	cmd := intents.Parse(ev.Body, b.Cfg.MentionToken(), mentionedSelf)
 	if cmd.Kind == intents.KindNone {
+		// Useful when debugging "why didn't the bot respond" — shows the
+		// body the parser saw plus whether the mentions[] hint fired.
+		b.Log.Debug("message ignored (no intent)",
+			"body", truncate(ev.Body, 80),
+			"mentioned_self", mentionedSelf,
+			"mentions", ev.MentionedIDs,
+			"chat", ev.From)
 		return nil
 	}
 	b.Log.Info("intent",

@@ -81,12 +81,12 @@ type Command struct {
 // Parse turns one message body into a Command. Returns Kind=KindNone when
 // the message isn't addressed to the bot.
 //
-// mentionToken is the bot's "@<digits>" form. botPhone is the digits-only
-// phone number, used to also accept WhatsApp's variant where the mention
-// appears in a side-channel and the body text doesn't include the "@<phone>"
-// prefix at all. In that case the caller should pre-check `len(mentions)>0
-// && contains(mentions, ourJid)` and strip the leading "@..." if any.
-func Parse(body, mentionToken string) Command {
+// mentionToken is the bot's "@<digits>" form. mentionedSelf is true when
+// the WAHA payload's mentions[] array contained the bot's jid — this
+// catches the case where the user picked the bot from WhatsApp's contact
+// chooser and the body shows "@Bot" (or any other contact name) rather
+// than the raw phone number.
+func Parse(body, mentionToken string, mentionedSelf bool) Command {
 	t := strings.TrimSpace(body)
 	if t == "" {
 		return Command{}
@@ -97,13 +97,31 @@ func Parse(body, mentionToken string) Command {
 		return Command{Kind: KindNumericReply, Arg: n}
 	}
 
-	// Mention path. WAHA sometimes folds the mention into the body as the
-	// literal "@<digits>", sometimes leaves it in a separate field. We
-	// accept the body-prefix form here.
-	if !strings.HasPrefix(strings.ToLower(t), strings.ToLower(mentionToken)) {
+	// Detect the mention. Two ways:
+	//   1. Body literally starts with "@<bot-phone>" (typed manually).
+	//   2. WAHA's mentions[] said we were mentioned (contact-picker path) —
+	//      in that case the body usually still has an "@<something>" prefix
+	//      (the contact display name), which we strip.
+	bodyHasNumeric := strings.HasPrefix(strings.ToLower(t), strings.ToLower(mentionToken))
+	if !bodyHasNumeric && !mentionedSelf {
 		return Command{}
 	}
-	rest := strings.TrimSpace(t[len(mentionToken):])
+
+	var rest string
+	switch {
+	case bodyHasNumeric:
+		rest = strings.TrimSpace(t[len(mentionToken):])
+	case strings.HasPrefix(t, "@"):
+		// Strip the leading "@<token>" — could be "@Bot", "@Concierge",
+		// "@~Bot", etc. The token ends at the first whitespace.
+		_, after := splitVerb(t)
+		rest = strings.TrimSpace(after)
+	default:
+		// Mentioned via side channel without an explicit "@..." prefix —
+		// treat the whole body as the command body.
+		rest = t
+	}
+
 	if rest == "" {
 		return Command{Kind: KindHelp, Mention: mentionToken}
 	}
