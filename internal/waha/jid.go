@@ -38,3 +38,12 @@ func FormatMention(jid string) string {
 	}
 	return "@" + phone
 }
+
+// FormatJID turns a digits-only phone number into a WAHA-style personal
+// jid ("<phone>@c.us"). Inverse of ParsePhoneFromJID.
+func FormatJID(phone string) string {
+	if phone == "" {
+		return ""
+	}
+	return phone + suffixContact
+}

@@ -13,4 +13,6 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/concierge /concierge
 EXPOSE 8080
 USER nonroot
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/concierge", "healthcheck"]
 ENTRYPOINT ["/concierge"]
