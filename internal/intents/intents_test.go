@@ -34,7 +34,7 @@ func TestParse(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Parse(tc.body, mention, false)
+			got := Parse(tc.body, []string{mention}, false)
 			if got != tc.want {
 				t.Errorf("Parse(%q) = %+v, want %+v", tc.body, got, tc.want)
 			}

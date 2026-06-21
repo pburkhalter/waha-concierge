@@ -81,12 +81,12 @@ type Command struct {
 // Parse turns one message body into a Command. Returns Kind=KindNone when
 // the message isn't addressed to the bot.
 //
-// mentionToken is the bot's "@<digits>" form. mentionedSelf is true when
-// the WAHA payload's mentions[] array contained the bot's jid — this
-// catches the case where the user picked the bot from WhatsApp's contact
-// chooser and the body shows "@Bot" (or any other contact name) rather
-// than the raw phone number.
-func Parse(body, mentionToken string, mentionedSelf bool) Command {
+// mentionTokens is the slice of "@<digits>" forms the bot answers to —
+// typically @<phone> and @<lid>. mentionedSelf is true when the WAHA
+// payload's mentions[] array contained the bot's jid; this catches the
+// case where the user picked the bot from WhatsApp's contact chooser
+// and the body shows "@Bot" rather than the raw digits.
+func Parse(body string, mentionTokens []string, mentionedSelf bool) Command {
 	t := strings.TrimSpace(body)
 	if t == "" {
 		return Command{}
@@ -98,19 +98,33 @@ func Parse(body, mentionToken string, mentionedSelf bool) Command {
 	}
 
 	// Detect the mention. Two ways:
-	//   1. Body literally starts with "@<bot-phone>" (typed manually).
+	//   1. Body literally starts with one of mentionTokens (typed manually
+	//      or picked from a chooser that inserted the raw "@<digits>").
 	//   2. WAHA's mentions[] said we were mentioned (contact-picker path) —
 	//      in that case the body usually still has an "@<something>" prefix
 	//      (the contact display name), which we strip.
-	bodyHasNumeric := strings.HasPrefix(strings.ToLower(t), strings.ToLower(mentionToken))
-	if !bodyHasNumeric && !mentionedSelf {
+	matchedToken := ""
+	for _, tok := range mentionTokens {
+		if tok == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(t), strings.ToLower(tok)) {
+			matchedToken = tok
+			break
+		}
+	}
+	if matchedToken == "" && !mentionedSelf {
 		return Command{}
 	}
 
+	primaryMention := ""
+	if len(mentionTokens) > 0 {
+		primaryMention = mentionTokens[0]
+	}
 	var rest string
 	switch {
-	case bodyHasNumeric:
-		rest = strings.TrimSpace(t[len(mentionToken):])
+	case matchedToken != "":
+		rest = strings.TrimSpace(t[len(matchedToken):])
 	case strings.HasPrefix(t, "@"):
 		// Strip the leading "@<token>" — could be "@Bot", "@Concierge",
 		// "@~Bot", etc. The token ends at the first whitespace.
@@ -123,11 +137,11 @@ func Parse(body, mentionToken string, mentionedSelf bool) Command {
 	}
 
 	if rest == "" {
-		return Command{Kind: KindHelp, Mention: mentionToken}
+		return Command{Kind: KindHelp, Mention: primaryMention}
 	}
 
 	verb, arg := splitVerb(rest)
-	cmd := Command{Arg: arg, Mention: mentionToken}
+	cmd := Command{Arg: arg, Mention: primaryMention}
 	switch strings.ToLower(verb) {
 	case "help", "hilfe", "?", "commands":
 		cmd.Kind = KindHelp

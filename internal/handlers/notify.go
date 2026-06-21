@@ -151,21 +151,10 @@ func (b *Bot) formatMovieNotice(ctx context.Context, ev radarrWebhook) (string, 
 	if ev.Movie.Year > 0 {
 		year = fmt.Sprintf(" (%d)", ev.Movie.Year)
 	}
-	mention, requester := b.requesterMention(ctx, ev.Movie.TmdbID)
 	link := b.jellyfinLink(ctx, ev.Movie.TmdbID, "movie")
 
-	var lines []string
-	lines = append(lines, fmt.Sprintf("🎬 *Film:* %s%s", ev.Movie.Title, year))
-	if mention != "" {
-		lines = append(lines, "🎉 "+mention+" — viel Spass!")
-	}
-	lines = append(lines, "🍿 "+link)
-
-	var mentions []string
-	if requester != "" {
-		mentions = []string{requester}
-	}
-	return strings.Join(lines, "\n"), mentions
+	body := fmt.Sprintf("🎬 *Film:* %s%s\n🍿 %s", ev.Movie.Title, year, link)
+	return body, nil
 }
 
 // jellyfinLink resolves the TMDB id to a Jellyfin item and builds the
@@ -260,22 +249,17 @@ func (b *Bot) formatEpisodeGroup(ctx context.Context, _ string, items []store.Pe
 		seriesTitle = items[0].DisplayName
 	}
 
-	mention, requester := b.requesterMention(ctx, tmdbID)
 	link := b.jellyfinLink(ctx, tmdbID, "tv")
 
 	var lines []string
 	lines = append(lines, fmt.Sprintf("📺 *Serie:* %s — Staffel %d (%d %s)",
 		seriesTitle, season, len(items), pluralEp(len(items))))
-	if mention != "" {
-		lines = append(lines, "🎉 "+mention+" — viel Spass!")
-		mentions = []string{requester}
-	}
 	if len(items) < 6 {
 		lines = append(lines, "", strings.Join(episodes, "\n"))
 	}
 	lines = append(lines, "", "🍿 "+link)
 	body = strings.Join(lines, "\n")
-	return body, mentions, ids, poster
+	return body, nil, ids, poster
 }
 
 func pluralEp(n int) string {

@@ -20,6 +20,8 @@ type Config struct {
 	WAHASession  string // e.g. "default"
 	WAHAChatID   string // group jid: 1203...@g.us
 	WAHABotPhone string // bot's own phone (digits only) — used to detect @mentions
+	WAHABotLID   string // bot's WhatsApp linked-id (digits only) — modern groups
+	                    // @-mention by LID, not by phone; we accept either.
 
 	// Jellyseerr — request + search source of truth.
 	SeerrURL    string
@@ -84,6 +86,7 @@ func Load(environ []string) (*Config, error) {
 		WAHASession:         defaulted(get, "WAHA_SESSION", "default"),
 		WAHAChatID:          get("WAHA_CHAT_ID"),
 		WAHABotPhone:        digitsOnly(get("WAHA_BOT_PHONE")),
+		WAHABotLID:          digitsOnly(get("WAHA_BOT_LID")),
 		SeerrURL:            strings.TrimRight(get("SEERR_URL"), "/"),
 		SeerrAPIKey:         get("SEERR_API_KEY"),
 		SonarrURL:           strings.TrimRight(get("SONARR_URL"), "/"),
@@ -145,9 +148,23 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// MentionToken is the literal "@<digits>" string that the bot expects to
-// see at the start of an incoming message to treat it as a command.
+// MentionToken is the primary literal "@<digits>" string the bot expects
+// at the start of an incoming message. For modern WhatsApp groups the
+// real prefix is the LID, not the phone — see MentionTokens for the full
+// list the parser should accept.
 func (c *Config) MentionToken() string { return "@" + c.WAHABotPhone }
+
+// MentionTokens returns every "@<digits>" prefix the bot answers to. In
+// LID-style groups WhatsApp inserts "@<lid>", in older/personal chats it
+// inserts "@<phone>". We accept both so the user doesn't have to know
+// which one their WhatsApp client picks.
+func (c *Config) MentionTokens() []string {
+	out := []string{"@" + c.WAHABotPhone}
+	if c.WAHABotLID != "" {
+		out = append(out, "@"+c.WAHABotLID)
+	}
+	return out
+}
 
 func defaulted(get func(string) string, key, def string) string {
 	if v := get(key); v != "" {

@@ -57,14 +57,15 @@ func New(cfg *config.Config, log *slog.Logger, w *waha.Client, sr *seerr.Client,
 // OnMessage routes inbound messages through the intents parser.
 func (b *Bot) OnMessage(ctx context.Context, ev waha.MessageEvent) error {
 	selfJID := waha.FormatJID(b.Cfg.WAHABotPhone)
+	selfLID := b.Cfg.WAHABotLID + "@lid"
 	mentionedSelf := false
 	for _, m := range ev.MentionedIDs {
-		if m == selfJID {
+		if m == selfJID || m == selfLID {
 			mentionedSelf = true
 			break
 		}
 	}
-	cmd := intents.Parse(ev.Body, b.Cfg.MentionToken(), mentionedSelf)
+	cmd := intents.Parse(ev.Body, b.Cfg.MentionTokens(), mentionedSelf)
 	if cmd.Kind == intents.KindNone {
 		// Useful when debugging "why didn't the bot respond" — shows the
 		// body the parser saw plus whether the mentions[] hint fired.
