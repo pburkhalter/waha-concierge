@@ -150,6 +150,14 @@ func (c *Client) CountLibrary(ctx context.Context, parentID, itemType string) (i
 // FindByTMDB resolves a TMDB id to the matching Jellyfin item. Returns
 // ErrNotFound when Jellyfin hasn't scanned the title yet (notification
 // fired before the library scan finished).
+//
+// We filter client-side rather than relying on Jellyfin's
+// `AnyProviderIdEquals=Tmdb.<id>` query param — that param is silently
+// ignored on at least Jellyfin 10.11.x: it returns *all* items of the
+// requested type, then taking the first (Limit=1) yields whatever
+// happens to sort first alphabetically. Every link pointed at the same
+// wrong series until we noticed. The library is small (single-host
+// homelab) so a full list-and-filter is fine.
 func (c *Client) FindByTMDB(ctx context.Context, tmdbID int, mediaType string) (*Lookup, error) {
 	if tmdbID <= 0 {
 		return nil, ErrNotFound
@@ -161,27 +169,29 @@ func (c *Client) FindByTMDB(ctx context.Context, tmdbID int, mediaType string) (
 	q := url.Values{}
 	q.Set("Recursive", "true")
 	q.Set("IncludeItemTypes", jfType)
-	q.Set("AnyProviderIdEquals", fmt.Sprintf("Tmdb.%d", tmdbID))
 	q.Set("Fields", "ProviderIds")
-	q.Set("Limit", "1")
+	q.Set("Limit", "1000")
 	path := fmt.Sprintf("/Users/%s/Items?%s", c.UserID, q.Encode())
 
 	var env struct {
 		Items []struct {
-			ID       string `json:"Id"`
-			Name     string `json:"Name"`
-			Type     string `json:"Type"`
-			ServerID string `json:"ServerId"`
+			ID          string            `json:"Id"`
+			Name        string            `json:"Name"`
+			Type        string            `json:"Type"`
+			ServerID    string            `json:"ServerId"`
+			ProviderIds map[string]string `json:"ProviderIds"`
 		} `json:"Items"`
 	}
 	if err := c.get(ctx, path, &env); err != nil {
 		return nil, err
 	}
-	if len(env.Items) == 0 {
-		return nil, ErrNotFound
+	wantTmdb := strconv.Itoa(tmdbID)
+	for _, it := range env.Items {
+		if it.ProviderIds["Tmdb"] == wantTmdb {
+			return &Lookup{ID: it.ID, Name: it.Name, Type: it.Type, ServerID: it.ServerID}, nil
+		}
 	}
-	it := env.Items[0]
-	return &Lookup{ID: it.ID, Name: it.Name, Type: it.Type, ServerID: it.ServerID}, nil
+	return nil, ErrNotFound
 }
 
 // ErrNotFound signals "nothing matched". Callers fall back to a library
