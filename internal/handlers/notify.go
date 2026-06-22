@@ -138,9 +138,14 @@ func (b *Bot) handleRadarr(ctx context.Context, ev radarrWebhook) error {
 	}
 	body, mentions := b.formatMovieNotice(ctx, ev)
 	poster := pickPoster(ev.Movie.ImagesV2, "poster")
+	// WAHA Core + NOWEB rejects SendImage with 422; fall back to plain text
+	// so the chat at least gets the title/year/link.
 	if poster != "" {
-		_, err := b.WAHA.SendImage(ctx, b.Cfg.WAHAChatID, poster, body, mentions)
-		return err
+		if _, err := b.WAHA.SendImage(ctx, b.Cfg.WAHAChatID, poster, body, mentions); err == nil {
+			return nil
+		} else {
+			b.Log.Warn("sendImage failed for movie, falling back to text", "err", err, "movie", ev.Movie.Title)
+		}
 	}
 	_, err := b.WAHA.SendText(ctx, b.Cfg.WAHAChatID, body, mentions)
 	return err
@@ -185,9 +190,16 @@ func (b *Bot) FlushPending(ctx context.Context, wait time.Duration) error {
 			continue
 		}
 		body, mentions, ids, poster := b.formatEpisodeGroup(ctx, showKey, items)
+		// SendImage requires WAHA Plus on the NOWEB engine; Core returns 422
+		// and the row would stay pending forever, retrying every minute. Try
+		// the image path, fall back to plain text so the notification still
+		// reaches the chat — better a textless message than a stuck queue.
 		var sendErr error
 		if poster != "" {
-			_, sendErr = b.WAHA.SendImage(ctx, b.Cfg.WAHAChatID, poster, body, mentions)
+			if _, sendErr = b.WAHA.SendImage(ctx, b.Cfg.WAHAChatID, poster, body, mentions); sendErr != nil {
+				b.Log.Warn("sendImage failed, falling back to text", "err", sendErr, "show", showKey)
+				_, sendErr = b.WAHA.SendText(ctx, b.Cfg.WAHAChatID, body, mentions)
+			}
 		} else {
 			_, sendErr = b.WAHA.SendText(ctx, b.Cfg.WAHAChatID, body, mentions)
 		}
