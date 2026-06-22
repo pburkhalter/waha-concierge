@@ -194,6 +194,44 @@ func (c *Client) FindByTMDB(ctx context.Context, tmdbID int, mediaType string) (
 	return nil, ErrNotFound
 }
 
+// SeasonPosterURL returns Jellyfin's per-season Primary image for the
+// given series item + season number. Empty string when Jellyfin hasn't
+// scanned the season yet or it has no Primary image — caller should
+// fall back to the series-level poster from the upstream webhook.
+//
+// Use case: a Sonarr import for "Family Guy Season 09" should attach
+// the Season 09 poster, not the generic series poster — those carry
+// season-specific artwork (cast art, themed key art) that the chat
+// surfaces best.
+func (c *Client) SeasonPosterURL(ctx context.Context, seriesItemID string, seasonNumber int) string {
+	if seriesItemID == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("ParentId", seriesItemID)
+	q.Set("IncludeItemTypes", "Season")
+	q.Set("Recursive", "false")
+	q.Set("Fields", "")
+	q.Set("Limit", "100")
+	path := fmt.Sprintf("/Users/%s/Items?%s", c.UserID, q.Encode())
+	var env struct {
+		Items []struct {
+			ID          string            `json:"Id"`
+			IndexNumber int               `json:"IndexNumber"`
+			ImageTags   map[string]string `json:"ImageTags"`
+		} `json:"Items"`
+	}
+	if err := c.get(ctx, path, &env); err != nil {
+		return ""
+	}
+	for _, it := range env.Items {
+		if it.IndexNumber == seasonNumber && it.ImageTags["Primary"] != "" {
+			return c.PosterURL(it.ID)
+		}
+	}
+	return ""
+}
+
 // ErrNotFound signals "nothing matched". Callers fall back to a library
 // landing link rather than a per-item deep link.
 var ErrNotFound = errors.New("jellyfin: not found")

@@ -249,7 +249,18 @@ func (b *Bot) formatEpisodeGroup(ctx context.Context, _ string, items []store.Pe
 		seriesTitle = items[0].DisplayName
 	}
 
-	link := b.jellyfinLink(ctx, tmdbID, "tv")
+	// Resolve the Jellyfin item once so we can both build the deep-link
+	// and look up the season-specific poster. Series-level webhook poster
+	// is the fallback when Jellyfin hasn't scanned the new season yet.
+	link := b.Cfg.JellyfinExternalURL
+	if it, err := b.Jellyfin.FindByTMDB(ctx, tmdbID, "tv"); err == nil {
+		if u := jellyfin.ItemWebURL(b.Cfg.JellyfinExternalURL, it.ID, it.ServerID); u != "" {
+			link = u
+		}
+		if sp := b.Jellyfin.SeasonPosterURL(ctx, it.ID, season); sp != "" {
+			poster = sp
+		}
+	}
 
 	var lines []string
 	lines = append(lines, fmt.Sprintf("📺 *Serie:* %s — Staffel %d (%d %s)",
