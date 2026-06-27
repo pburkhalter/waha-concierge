@@ -71,6 +71,15 @@ type Config struct {
 
 	// HTTPTimeout caps every outbound API call.
 	HTTPTimeout time.Duration
+
+	// WAHASendImages controls whether the flush worker attempts SendImage
+	// at all. WAHA Core on the NOWEB engine returns 422 for that endpoint,
+	// so on a Core deployment every grouped Sonarr push wastes one HTTP
+	// round-trip to WAHA, eats a warn-log line, then falls back to text.
+	// Set false (the default) to skip the image path entirely and go
+	// straight to SendText. Flip to true once WAHA is upgraded to Plus or
+	// switched to WEBJS.
+	WAHASendImages bool
 }
 
 // LoadFromOS parses os.Environ(). Use in main.
@@ -116,6 +125,7 @@ func Load(environ []string) (*Config, error) {
 		LogLevel:            defaulted(get, "LOG_LEVEL", "info"),
 		LogFormat:           defaulted(get, "LOG_FORMAT", "json"),
 		HTTPTimeout:         parseDuration(get("HTTP_TIMEOUT"), 30*time.Second),
+		WAHASendImages:      parseBool(get("WAHA_SEND_IMAGES"), false),
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -179,6 +189,16 @@ func (c *Config) MentionTokens() []string {
 func defaulted(get func(string) string, key, def string) string {
 	if v := get(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func parseBool(s string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true", "yes", "1", "on":
+		return true
+	case "false", "no", "0", "off":
+		return false
 	}
 	return def
 }

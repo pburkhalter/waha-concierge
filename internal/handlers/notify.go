@@ -190,12 +190,13 @@ func (b *Bot) FlushPending(ctx context.Context, wait time.Duration) error {
 			continue
 		}
 		body, mentions, ids, poster := b.formatEpisodeGroup(ctx, showKey, items)
-		// SendImage requires WAHA Plus on the NOWEB engine; Core returns 422
-		// and the row would stay pending forever, retrying every minute. Try
-		// the image path, fall back to plain text so the notification still
-		// reaches the chat — better a textless message than a stuck queue.
+
 		var sendErr error
-		if poster != "" {
+		// WAHASendImages defaults false: on Core+NOWEB the SendImage path
+		// returns 422 every time and the row gets stuck in the retry loop.
+		// Set true once WAHA is on Plus or WEBJS — then the image path runs
+		// first and falls back to text on any failure.
+		if poster != "" && b.Cfg.WAHASendImages {
 			if _, sendErr = b.WAHA.SendImage(ctx, b.Cfg.WAHAChatID, poster, body, mentions); sendErr != nil {
 				b.Log.Warn("sendImage failed, falling back to text", "err", sendErr, "show", showKey)
 				_, sendErr = b.WAHA.SendText(ctx, b.Cfg.WAHAChatID, body, mentions)
@@ -203,10 +204,21 @@ func (b *Bot) FlushPending(ctx context.Context, wait time.Duration) error {
 		} else {
 			_, sendErr = b.WAHA.SendText(ctx, b.Cfg.WAHAChatID, body, mentions)
 		}
+
 		if sendErr != nil {
-			b.Log.Warn("flush send failed", "err", sendErr, "show", showKey)
+			// Two failures means something durable is wrong (WAHA unreachable,
+			// session disconnected, …) — mark flushed anyway so the row
+			// doesn't pile up forever and the operator can spot the issue in
+			// logs. Loud-warn so it's noticed.
+			b.Log.Error("flush send failed, marking flushed to prevent pile-up",
+				"err", sendErr, "show", showKey, "items", len(items))
+			if err := b.Store.MarkFlushed(ctx, ids); err != nil {
+				b.Log.Warn("mark flushed failed", "err", err, "show", showKey)
+			}
 			continue
 		}
+
+		b.Log.Info("flush sent", "show", showKey, "items", len(items))
 		if err := b.Store.MarkFlushed(ctx, ids); err != nil {
 			b.Log.Warn("mark flushed failed", "err", err, "show", showKey)
 		}
