@@ -126,10 +126,12 @@ func run() error {
 		errCh <- srv.ListenAndServe()
 	}()
 
-	// Background flush: episode-grouped notifications wait `flushAfter`
-	// before being posted so a season-import becomes one message, not N.
+	// Background flush: episode-grouped notifications wait `flushAfter` for
+	// at least one row to mature AND `flushQuiet` of silence (no new rows for
+	// the show) so a slowly-trickling season import lands as one message.
 	flushAfter := 10 * time.Minute
-	go flushLoop(rootCtx, bot, flushAfter, log.With("component", "flush"))
+	flushQuiet := 5 * time.Minute
+	go flushLoop(rootCtx, bot, flushAfter, flushQuiet, log.With("component", "flush"))
 
 	// Background search-reaper: keeps the searches table small even when
 	// users open a suche and never reply.
@@ -149,7 +151,7 @@ func run() error {
 	return nil
 }
 
-func flushLoop(ctx context.Context, bot *handlers.Bot, wait time.Duration, log *slog.Logger) {
+func flushLoop(ctx context.Context, bot *handlers.Bot, wait, quietPeriod time.Duration, log *slog.Logger) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -157,7 +159,7 @@ func flushLoop(ctx context.Context, bot *handlers.Bot, wait time.Duration, log *
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := bot.FlushPending(ctx, wait); err != nil {
+			if err := bot.FlushPending(ctx, wait, quietPeriod); err != nil {
 				log.Warn("flush failed", "err", err)
 			}
 		}

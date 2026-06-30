@@ -103,12 +103,12 @@ func TestPendingImports(t *testing.T) {
 		}
 	}
 	// Nothing is due yet (wait=1h, just-added rows).
-	due, err := s.DueImports(ctx, time.Hour)
+	due, err := s.DueImports(ctx, time.Hour, time.Hour)
 	if err != nil || len(due) != 0 {
 		t.Fatalf("expected 0 due, got %d (err=%v)", len(due), err)
 	}
-	// With wait=0, everything is due.
-	due, err = s.DueImports(ctx, 0)
+	// With wait=0 and quiet=0, everything is due.
+	due, err = s.DueImports(ctx, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +122,39 @@ func TestPendingImports(t *testing.T) {
 	if err := s.MarkFlushed(ctx, ids); err != nil {
 		t.Fatal(err)
 	}
-	due, err = s.DueImports(ctx, 0)
+	due, err = s.DueImports(ctx, 0, 0)
 	if err != nil || len(due) != 0 {
 		t.Errorf("expected 0 due after flush, got %d (err=%v)", len(due), err)
+	}
+}
+
+// Regression: a slowly-trickling Sonarr season-import (one row every few
+// minutes) must NOT flush one-at-a-time. It should wait until the burst
+// stops (no new rows for `quietPeriod`), then ship the whole group.
+func TestPendingImportsWaitsForQuiet(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// 3 rows: oldest 20min ago (mature for wait=10min), newest 1min ago
+	// (NOT quiet for quietPeriod=5min).
+	for _, age := range []time.Duration{20 * time.Minute, 10 * time.Minute, 1 * time.Minute} {
+		_, err := s.db.ExecContext(ctx, `INSERT INTO pending_imports
+			(show_key, display_name, added_at, payload) VALUES (?, ?, ?, ?)`,
+			"sonarr:1:5", "Test S5", now.Add(-age), `{}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	due, err := s.DueImports(ctx, 10*time.Minute, 5*time.Minute)
+	if err != nil || len(due) != 0 {
+		t.Fatalf("expected 0 due (newest row too recent), got %d", len(due))
+	}
+	// Drop quiet period to 30s — now the 1-min-old row qualifies → flush all 3
+	due, err = s.DueImports(ctx, 10*time.Minute, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(due["sonarr:1:5"]); got != 3 {
+		t.Errorf("expected 3 rows in group, got %d", got)
 	}
 }

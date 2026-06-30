@@ -251,14 +251,29 @@ type PendingImport struct {
 	PayloadJSON string
 }
 
-// DueImports returns groups of pending imports older than `wait`, capped
-// at `maxPerGroup` rows per show. Caller flushes each group as one message
-// and then calls MarkFlushed.
-func (s *Store) DueImports(ctx context.Context, wait time.Duration) (map[string][]PendingImport, error) {
-	cutoff := time.Now().UTC().Add(-wait)
-	rows, err := s.db.QueryContext(ctx, `SELECT id, show_key, display_name, added_at, payload
-		FROM pending_imports WHERE flushed_at IS NULL AND added_at <= ?
-		ORDER BY show_key, added_at ASC`, cutoff)
+// DueImports returns ALL pending imports for any show that has settled:
+//   - oldest pending row for the show is older than `wait` (long enough that we
+//     should ship something), AND
+//   - newest pending row for the show is older than `quietPeriod` (no fresh
+//     activity, so the season import has probably finished trickling in).
+// The two-condition gate keeps a 22-episode Sonarr import — which lands one
+// row every few minutes — out of N individual messages; we wait until the
+// whole burst is in, then flush them as a single group. Caller flushes each
+// group as one message and then calls MarkFlushed.
+func (s *Store) DueImports(ctx context.Context, wait, quietPeriod time.Duration) (map[string][]PendingImport, error) {
+	matureCutoff := time.Now().UTC().Add(-wait)
+	quietCutoff := time.Now().UTC().Add(-quietPeriod)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, show_key, display_name, added_at, payload
+		FROM pending_imports
+		WHERE flushed_at IS NULL
+		  AND show_key IN (
+		      SELECT show_key FROM pending_imports
+		      WHERE flushed_at IS NULL
+		      GROUP BY show_key
+		      HAVING MIN(added_at) <= ? AND MAX(added_at) <= ?
+		  )
+		ORDER BY show_key, added_at ASC`, matureCutoff, quietCutoff)
 	if err != nil {
 		return nil, err
 	}

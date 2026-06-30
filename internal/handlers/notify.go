@@ -180,8 +180,8 @@ func (b *Bot) jellyfinLink(ctx context.Context, tmdbID int, mediaType string) st
 // ticker (e.g. every 60s) with a `wait` like 10*time.Minute — anything
 // older than wait gets grouped and sent. When the buffered payload has
 // a poster URL, the bot uses SendImage so the show poster renders inline.
-func (b *Bot) FlushPending(ctx context.Context, wait time.Duration) error {
-	groups, err := b.Store.DueImports(ctx, wait)
+func (b *Bot) FlushPending(ctx context.Context, wait, quietPeriod time.Duration) error {
+	groups, err := b.Store.DueImports(ctx, wait, quietPeriod)
 	if err != nil {
 		return err
 	}
