@@ -19,6 +19,16 @@ type streamingStatus struct {
 	Issues      []string        `json:"issues"`
 	Metrics     json.RawMessage `json:"metrics,omitempty"`
 	SceneNZB    *quotaHeadroom  `json:"scenenzb,omitempty"`
+	Jellyfin    *jellyfinCounts `json:"jellyfin,omitempty"`
+}
+
+// jellyfinCounts is per-library (Filme + Serien VirtualFolders), so the
+// dashboard can show movies and series on one card without the orphan
+// inflation of Jellyfin's global /Items/Counts.
+type jellyfinCounts struct {
+	Movies   int `json:"movies"`
+	Series   int `json:"series"`
+	Episodes int `json:"episodes"`
 }
 
 type quotaHeadroom struct {
@@ -93,6 +103,15 @@ func (b *Bot) StreamingStatusHandler() http.Handler {
 
 			if populated {
 				out.SceneNZB = hr
+			}
+		}
+
+		// Jellyfin per-library counts (optional — needs JELLYFIN_*_LIBRARY_ID).
+		if b.Jellyfin != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), b.Cfg.HTTPTimeout)
+			defer cancel()
+			if movies, series, episodes, ok := b.libraryCounts(ctx); ok {
+				out.Jellyfin = &jellyfinCounts{Movies: movies, Series: series, Episodes: episodes}
 			}
 		}
 
