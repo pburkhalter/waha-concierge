@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,7 +22,7 @@ type Config struct {
 	WAHAChatID   string // group jid: 1203...@g.us
 	WAHABotPhone string // bot's own phone (digits only) — used to detect @mentions
 	WAHABotLID   string // bot's WhatsApp linked-id (digits only) — modern groups
-	                    // @-mention by LID, not by phone; we accept either.
+	// @-mention by LID, not by phone; we accept either.
 
 	// Jellyseerr — request + search source of truth.
 	SeerrURL    string
@@ -34,6 +35,19 @@ type Config struct {
 	// Radarr v3.
 	RadarrURL    string
 	RadarrAPIKey string
+
+	// Prowlarr — optional, powers the streaming dashboard's SceneNZB daily
+	// grab-quota headroom. Empty URL/key disables that field of the
+	// /streaming-status.json aggregator (it degrades, never fails).
+	ProwlarrURL          string
+	ProwlarrAPIKey       string
+	ProwlarrQuotaIndexer string // Prowlarr indexer name to track (e.g. "SceneNZB")
+	QuotaIndexerDailyCap int    // that indexer's grabs/day ceiling (e.g. 400)
+
+	// HealthStatusFile is the healthcheck script's JSON drop, mounted
+	// read-only into the container. The aggregator surfaces its issues[]
+	// as the dashboard's error panel. Empty disables the issues field.
+	HealthStatusFile string
 
 	// Jellyfin — recently-added, library counts, posters.
 	JellyfinURL    string
@@ -97,35 +111,40 @@ func Load(environ []string) (*Config, error) {
 	get := func(k string) string { return envMap[k] }
 
 	c := &Config{
-		Listen:              defaulted(get, "LISTEN", ":8080"),
-		WAHAURL:             strings.TrimRight(get("WAHA_URL"), "/"),
-		WAHAAPIKey:          get("WAHA_API_KEY"),
-		WAHASession:         defaulted(get, "WAHA_SESSION", "default"),
-		WAHAChatID:          get("WAHA_CHAT_ID"),
-		WAHABotPhone:        digitsOnly(get("WAHA_BOT_PHONE")),
-		WAHABotLID:          digitsOnly(get("WAHA_BOT_LID")),
-		SeerrURL:            strings.TrimRight(get("SEERR_URL"), "/"),
-		SeerrAPIKey:         get("SEERR_API_KEY"),
-		SonarrURL:           strings.TrimRight(get("SONARR_URL"), "/"),
-		SonarrAPIKey:        get("SONARR_API_KEY"),
-		RadarrURL:           strings.TrimRight(get("RADARR_URL"), "/"),
-		RadarrAPIKey:        get("RADARR_API_KEY"),
-		JellyfinURL:         strings.TrimRight(get("JELLYFIN_URL"), "/"),
-		JellyfinAPIKey:      get("JELLYFIN_API_KEY"),
-		JellyfinUserID:      get("JELLYFIN_USER_ID"),
+		Listen:                  defaulted(get, "LISTEN", ":8080"),
+		WAHAURL:                 strings.TrimRight(get("WAHA_URL"), "/"),
+		WAHAAPIKey:              get("WAHA_API_KEY"),
+		WAHASession:             defaulted(get, "WAHA_SESSION", "default"),
+		WAHAChatID:              get("WAHA_CHAT_ID"),
+		WAHABotPhone:            digitsOnly(get("WAHA_BOT_PHONE")),
+		WAHABotLID:              digitsOnly(get("WAHA_BOT_LID")),
+		SeerrURL:                strings.TrimRight(get("SEERR_URL"), "/"),
+		SeerrAPIKey:             get("SEERR_API_KEY"),
+		SonarrURL:               strings.TrimRight(get("SONARR_URL"), "/"),
+		SonarrAPIKey:            get("SONARR_API_KEY"),
+		RadarrURL:               strings.TrimRight(get("RADARR_URL"), "/"),
+		RadarrAPIKey:            get("RADARR_API_KEY"),
+		ProwlarrURL:             strings.TrimRight(get("PROWLARR_URL"), "/"),
+		ProwlarrAPIKey:          get("PROWLARR_API_KEY"),
+		ProwlarrQuotaIndexer:    defaulted(get, "PROWLARR_QUOTA_INDEXER", "SceneNZB"),
+		QuotaIndexerDailyCap:    parseInt(get("QUOTA_INDEXER_DAILY_CAP"), 400),
+		HealthStatusFile:        get("HEALTH_STATUS_FILE"),
+		JellyfinURL:             strings.TrimRight(get("JELLYFIN_URL"), "/"),
+		JellyfinAPIKey:          get("JELLYFIN_API_KEY"),
+		JellyfinUserID:          get("JELLYFIN_USER_ID"),
 		JellyfinMovieLibraryID:  get("JELLYFIN_MOVIE_LIBRARY_ID"),
 		JellyfinSeriesLibraryID: get("JELLYFIN_SERIES_LIBRARY_ID"),
-		JellyfinExternalURL: strings.TrimRight(get("JELLYFIN_EXTERNAL_URL"), "/"),
-		SeerrExternalURL:    strings.TrimRight(get("SEERR_EXTERNAL_URL"), "/"),
-		CronWeeklyDigest:    defaulted(get, "CRON_WEEKLY_DIGEST", "0 9 * * 0"),
-		CronWeeklyPoll:      defaulted(get, "CRON_WEEKLY_POLL", "0 19 * * 5"),
-		CronDailyHealth:     defaulted(get, "CRON_DAILY_HEALTH", "0 8 * * *"),
-		PhoneMap:            phoneMapFrom(envMap),
-		DBPath:              defaulted(get, "DB_PATH", "/data/concierge.db"),
-		LogLevel:            defaulted(get, "LOG_LEVEL", "info"),
-		LogFormat:           defaulted(get, "LOG_FORMAT", "json"),
-		HTTPTimeout:         parseDuration(get("HTTP_TIMEOUT"), 30*time.Second),
-		WAHASendImages:      parseBool(get("WAHA_SEND_IMAGES"), false),
+		JellyfinExternalURL:     strings.TrimRight(get("JELLYFIN_EXTERNAL_URL"), "/"),
+		SeerrExternalURL:        strings.TrimRight(get("SEERR_EXTERNAL_URL"), "/"),
+		CronWeeklyDigest:        defaulted(get, "CRON_WEEKLY_DIGEST", "0 9 * * 0"),
+		CronWeeklyPoll:          defaulted(get, "CRON_WEEKLY_POLL", "0 19 * * 5"),
+		CronDailyHealth:         defaulted(get, "CRON_DAILY_HEALTH", "0 8 * * *"),
+		PhoneMap:                phoneMapFrom(envMap),
+		DBPath:                  defaulted(get, "DB_PATH", "/data/concierge.db"),
+		LogLevel:                defaulted(get, "LOG_LEVEL", "info"),
+		LogFormat:               defaulted(get, "LOG_FORMAT", "json"),
+		HTTPTimeout:             parseDuration(get("HTTP_TIMEOUT"), 30*time.Second),
+		WAHASendImages:          parseBool(get("WAHA_SEND_IMAGES"), false),
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -199,6 +218,16 @@ func parseBool(s string, def bool) bool {
 		return true
 	case "false", "no", "0", "off":
 		return false
+	}
+	return def
+}
+
+func parseInt(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return n
 	}
 	return def
 }

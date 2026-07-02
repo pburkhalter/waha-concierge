@@ -88,11 +88,12 @@ func run() error {
 
 	bot := handlers.New(cfg, log, wahaClient, seerrClient, sonarrClient, radarrClient, jellyClient, st)
 
-	// HTTP router. Four surfaces:
-	//   /waha-webhook     ← WAHA event push (messages, joins, votes)
-	//   /webhook/sonarr   ← Sonarr "Connect" outbound webhook
-	//   /webhook/radarr   ← Radarr "Connect" outbound webhook
-	//   /healthz          ← container healthcheck
+	// HTTP router. Surfaces:
+	//   /waha-webhook          ← WAHA event push (messages, joins, votes)
+	//   /webhook/sonarr        ← Sonarr "Connect" outbound webhook
+	//   /webhook/radarr        ← Radarr "Connect" outbound webhook
+	//   /streaming-status.json ← dashboard aggregator (issues + SceneNZB quota)
+	//   /healthz               ← container healthcheck
 	mux := http.NewServeMux()
 	mux.Handle("/waha-webhook", (&waha.Receiver{
 		Handler: bot,
@@ -100,6 +101,7 @@ func run() error {
 	}).HTTPHandler())
 	mux.Handle("/webhook/sonarr", bot.WebhookHandler("sonarr"))
 	mux.Handle("/webhook/radarr", bot.WebhookHandler("radarr"))
+	mux.Handle("/streaming-status.json", bot.StreamingStatusHandler())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"status":"ok"}`)

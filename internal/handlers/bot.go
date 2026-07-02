@@ -13,6 +13,7 @@ import (
 	"github.com/pburkhalter/waha-concierge/internal/config"
 	"github.com/pburkhalter/waha-concierge/internal/intents"
 	"github.com/pburkhalter/waha-concierge/internal/jellyfin"
+	"github.com/pburkhalter/waha-concierge/internal/prowlarr"
 	"github.com/pburkhalter/waha-concierge/internal/radarr"
 	"github.com/pburkhalter/waha-concierge/internal/seerr"
 	"github.com/pburkhalter/waha-concierge/internal/sonarr"
@@ -32,6 +33,10 @@ type Bot struct {
 	Jellyfin *jellyfin.Client
 	Store    *store.Store
 
+	// Prowlarr is nil unless PROWLARR_URL + PROWLARR_API_KEY are set. Used
+	// only by the /streaming-status.json aggregator for grab-quota headroom.
+	Prowlarr *prowlarr.Client
+
 	// SearchTTL caps how long a numeric reply ("1") remains bound to the
 	// most recent suche from the same sender. Keep short to avoid stale
 	// replies firing requests for the wrong title.
@@ -46,12 +51,16 @@ type Bot struct {
 // New returns a Bot with sensible default TTLs.
 func New(cfg *config.Config, log *slog.Logger, w *waha.Client, sr *seerr.Client,
 	so *sonarr.Client, ra *radarr.Client, jf *jellyfin.Client, st *store.Store) *Bot {
-	return &Bot{
+	b := &Bot{
 		Cfg: cfg, Log: log, WAHA: w, Seerr: sr, Sonarr: so, Radarr: ra,
 		Jellyfin: jf, Store: st,
 		SearchTTL:       2 * time.Minute,
 		WelcomeCooldown: 24 * time.Hour,
 	}
+	if cfg.ProwlarrURL != "" && cfg.ProwlarrAPIKey != "" {
+		b.Prowlarr = prowlarr.NewClient(cfg.ProwlarrURL, cfg.ProwlarrAPIKey, cfg.HTTPTimeout)
+	}
+	return b
 }
 
 // OnMessage routes inbound messages through the intents parser.
