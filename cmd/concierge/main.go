@@ -102,6 +102,7 @@ func run() error {
 	mux.Handle("/webhook/sonarr", bot.WebhookHandler("sonarr"))
 	mux.Handle("/webhook/radarr", bot.WebhookHandler("radarr"))
 	mux.Handle("/streaming-status.json", bot.StreamingStatusHandler())
+	mux.Handle("/trigger", bot.TriggerSearchHandler())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"status":"ok"}`)

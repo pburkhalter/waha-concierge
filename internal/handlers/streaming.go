@@ -22,10 +22,11 @@ type streamingStatus struct {
 }
 
 type quotaHeadroom struct {
-	Indexer string `json:"indexer"`
-	Used    int    `json:"used"`
-	Cap     int    `json:"cap"`
-	Left    int    `json:"left"`
+	Indexer   string `json:"indexer"`
+	Used      int    `json:"used"`
+	Cap       int    `json:"cap"`
+	Left      int    `json:"left"`
+	Available *bool  `json:"available,omitempty"`
 }
 
 // healthDoc mirrors the fields the NAS healthcheck script writes to
@@ -61,26 +62,37 @@ func (b *Bot) StreamingStatusHandler() http.Handler {
 			}
 		}
 
-		// SceneNZB grab-quota headroom (optional — needs Prowlarr).
+		// SceneNZB grab-quota headroom + availability (optional — needs Prowlarr).
 		if b.Prowlarr != nil {
 			ctx, cancel := context.WithTimeout(r.Context(), b.Cfg.HTTPTimeout)
 			defer cancel()
+			indexer := b.Cfg.ProwlarrQuotaIndexer
+			dailyCap := b.Cfg.QuotaIndexerDailyCap
+			hr := &quotaHeadroom{Indexer: indexer, Cap: dailyCap}
+			populated := false
+
 			midnight := time.Now().UTC().Truncate(24 * time.Hour)
-			used, found, err := b.Prowlarr.GrabsSince(ctx, b.Cfg.ProwlarrQuotaIndexer, midnight)
-			if err != nil {
+			if used, found, err := b.Prowlarr.GrabsSince(ctx, indexer, midnight); err != nil {
 				b.Log.Warn("streaming-status: prowlarr stats failed", "err", err)
 			} else if found {
-				dailyCap := b.Cfg.QuotaIndexerDailyCap
 				left := dailyCap - used
 				if left < 0 {
 					left = 0
 				}
-				out.SceneNZB = &quotaHeadroom{
-					Indexer: b.Cfg.ProwlarrQuotaIndexer,
-					Used:    used,
-					Cap:     dailyCap,
-					Left:    left,
-				}
+				hr.Used, hr.Left = used, left
+				populated = true
+			}
+
+			if avail, found, err := b.Prowlarr.IndexerAvailable(ctx, indexer); err != nil {
+				b.Log.Warn("streaming-status: prowlarr indexer status failed", "err", err)
+			} else if found {
+				a := avail
+				hr.Available = &a
+				populated = true
+			}
+
+			if populated {
+				out.SceneNZB = hr
 			}
 		}
 

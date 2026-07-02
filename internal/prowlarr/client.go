@@ -72,6 +72,55 @@ func (c *Client) GrabsSince(ctx context.Context, indexerName string, since time.
 	return 0, false, nil
 }
 
+// indexerDef is one row of /api/v1/indexer.
+type indexerDef struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Enable bool   `json:"enable"`
+}
+
+// indexerStatusRow is one row of /api/v1/indexerstatus — only indexers that
+// are currently failing/disabled appear here.
+type indexerStatusRow struct {
+	IndexerID    int        `json:"indexerId"`
+	DisabledTill *time.Time `json:"disabledTill"`
+}
+
+// IndexerAvailable reports whether the named indexer is enabled and not
+// currently in a failure back-off. Returns (available, found, err); found is
+// false when no indexer matches the name.
+func (c *Client) IndexerAvailable(ctx context.Context, indexerName string) (avail bool, found bool, err error) {
+	var defs []indexerDef
+	if err := c.get(ctx, "/indexer", &defs); err != nil {
+		return false, false, err
+	}
+	id := -1
+	enabled := false
+	for _, d := range defs {
+		if strings.EqualFold(d.Name, indexerName) {
+			id, enabled = d.ID, d.Enable
+			break
+		}
+	}
+	if id < 0 {
+		return false, false, nil
+	}
+	if !enabled {
+		return false, true, nil
+	}
+	var statuses []indexerStatusRow
+	if err := c.get(ctx, "/indexerstatus", &statuses); err != nil {
+		return false, true, err
+	}
+	now := time.Now()
+	for _, s := range statuses {
+		if s.IndexerID == id && s.DisabledTill != nil && s.DisabledTill.After(now) {
+			return false, true, nil // in back-off
+		}
+	}
+	return true, true, nil
+}
+
 func (c *Client) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/v1"+path, nil)
 	if err != nil {

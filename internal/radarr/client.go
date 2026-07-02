@@ -105,6 +105,19 @@ func (c *Client) RecentImports(ctx context.Context, take int) ([]HistoryItem, er
 	return env.Records, nil
 }
 
+// SearchMissing kicks off a search for every monitored-but-missing movie.
+// Radarr runs the command asynchronously; this returns once it's queued.
+func (c *Client) SearchMissing(ctx context.Context) error {
+	body := strings.NewReader(`{"name":"MissingMoviesSearch"}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/v3/command", body)
+	if err != nil {
+		return err
+	}
+	c.auth(req)
+	req.Header.Set("Content-Type", "application/json")
+	return c.do(req, nil)
+}
+
 func (c *Client) auth(req *http.Request) {
 	req.Header.Set("X-Api-Key", c.APIKey)
 	req.Header.Set("Accept", "application/json")
